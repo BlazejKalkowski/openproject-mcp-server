@@ -180,6 +180,14 @@ def description_image_ids(description: str) -> List[int]:
     return list(dict.fromkeys(int(match) for match in DESCRIPTION_IMAGE.findall(description or "")))
 
 
+def comment_image_ids(comments: Any) -> List[int]:
+    """Unique attachment IDs embedded in comment bodies (in order)."""
+    if not isinstance(comments, list):
+        return []
+    texts = [item.get("comment") or "" for item in comments if isinstance(item, dict)]
+    return description_image_ids("\n".join(texts))
+
+
 async def _fetch_comments(client, wp_id: int) -> List[Dict[str, Any]]:
     return build_activities(await client.get_work_package_activities(wp_id), comments_only=True)
 
@@ -238,8 +246,15 @@ async def build_work_package_context(
     if "children" in sections:
         context["hierarchy"] = {"parent": details["parent"], "children": sections["children"]}
 
+    in_description = description_image_ids(details["description"])
+    in_comments = [
+        image_id
+        for image_id in comment_image_ids(sections.get("comments"))
+        if image_id not in in_description
+    ]
     context["description_images"] = {
-        "attachment_ids": description_image_ids(details["description"]),
+        "attachment_ids": in_description,
+        "comment_attachment_ids": in_comments,
         "hint": IMAGE_HINT,
     }
     return context
@@ -370,14 +385,20 @@ def context_to_markdown(data: Dict[str, Any]) -> str:
     if "hierarchy" in data:
         lines += _section("🌳 Hierarchia", data["hierarchy"], _hierarchy_markdown)
 
-    image_ids = data.get("description_images", {}).get("attachment_ids") or []
-    if image_ids:
-        lines += [
-            "",
-            f"## 🖼️ Obrazy w opisie ({len(image_ids)})",
-            "Załączniki: " + ", ".join(f"#{image_id}" for image_id in image_ids),
-            IMAGE_HINT,
-        ]
+    images = data.get("description_images", {})
+    image_ids = images.get("attachment_ids") or []
+    comment_ids = images.get("comment_attachment_ids") or []
+    if image_ids or comment_ids:
+        lines += ["", f"## 🖼️ Obrazy osadzone ({len(image_ids) + len(comment_ids)})"]
+        if image_ids:
+            lines.append(
+                "W opisie: " + ", ".join(f"#{image_id}" for image_id in image_ids)
+            )
+        if comment_ids:
+            lines.append(
+                "W komentarzach: " + ", ".join(f"#{image_id}" for image_id in comment_ids)
+            )
+        lines.append(IMAGE_HINT)
     return "\n".join(lines)
 
 
@@ -434,7 +455,8 @@ async def get_work_package_context(
 
     Sections: details with custom fields, comments (full text), attachments list
     (metadata only), relations, hierarchy (parent and children) and IDs of images
-    referenced in the description. A failing section does not break the others.
+    embedded in the description and in comments. A failing section does not break
+    the others.
     Use this before planning or implementing a work package.
 
     Args:

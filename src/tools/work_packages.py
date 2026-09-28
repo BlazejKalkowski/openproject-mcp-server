@@ -1,7 +1,7 @@
 """Work package management tools - Priority CRITICAL tools for 12 users."""
 
 import json
-from typing import Optional
+from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
 from src.server import mcp, get_client
@@ -12,6 +12,15 @@ from src.utils.formatting import (
     format_work_package_detail,
     format_success,
     format_error,
+)
+
+
+CUSTOM_FIELDS_DESCRIPTION = (
+    "Optional custom field values keyed by custom field number, sent to the API as "
+    "customField<N> (e.g. {\"1\": 5} for a list field or {\"56\": true} for a checkbox). "
+    "For a Formattable (rich text) custom field, such as 'Tips for testing', pass "
+    "{\"raw\": \"text\"} as the value, e.g. {\"20\": {\"raw\": \"Steps to reproduce...\"}}. "
+    "Use get_work_package_context or the project's work package schema to find field numbers."
 )
 
 
@@ -29,6 +38,7 @@ class CreateWorkPackageInput(BaseModel):
     status_id: Optional[int] = Field(None, description="Status ID", gt=0)
     priority_id: Optional[int] = Field(None, description="Priority ID", gt=0)
     version_id: Optional[int] = Field(None, description="Version/milestone ID to assign work package to", gt=0)
+    custom_fields: Optional[Dict[int, Any]] = Field(None, description=CUSTOM_FIELDS_DESCRIPTION)
 
 
 class UpdateWorkPackageInput(BaseModel):
@@ -45,6 +55,36 @@ class UpdateWorkPackageInput(BaseModel):
     due_date: Optional[str] = Field(None, description="New due date (YYYY-MM-DD)")
     percentage_done: Optional[int] = Field(None, description="Progress percentage (0-100)", ge=0, le=100)
     version_id: Optional[int] = Field(None, description="Version/milestone ID to assign work package to", gt=0)
+    custom_fields: Optional[Dict[int, Any]] = Field(None, description=CUSTOM_FIELDS_DESCRIPTION)
+
+
+class DuplicateWorkPackageInput(BaseModel):
+    """Input model for duplicating a work package."""
+
+    work_package_id: int = Field(..., description="Work package ID to duplicate", gt=0)
+    subject: Optional[str] = Field(
+        None,
+        description="Subject of the copy (defaults to the source subject)",
+        min_length=1,
+        max_length=255,
+    )
+    target_project_id: Optional[int] = Field(
+        None, description="Project of the copy (defaults to the source project)", gt=0
+    )
+
+
+def _format_custom_fields(result: Dict, field_ids) -> str:
+    text = ""
+    for field_id in field_ids:
+        key = f"customField{field_id}"
+        value = result.get(key)
+        if value is None:
+            links = result.get("_links", {}) or {}
+            link = links.get(key)
+            if isinstance(link, dict):
+                value = link.get("title")
+        text += f"**{key}**: {value if value is not None else 'N/A'}\n"
+    return text
 
 
 @mcp.tool
@@ -423,7 +463,8 @@ async def create_work_package(input: CreateWorkPackageInput) -> str:
             "description": "Users cannot login with valid credentials",
             "priority_id": 3,
             "assignee_id": 7,
-            "due_date": "2025-01-15"
+            "due_date": "2025-01-15",
+            "custom_fields": {"20": {"raw": "Log in as a test user and try an expired password"}}
         }
     """
     try:
@@ -445,6 +486,8 @@ async def create_work_package(input: CreateWorkPackageInput) -> str:
             data["assignee_id"] = input.assignee_id
         if input.version_id:
             data["version_id"] = input.version_id
+        if input.custom_fields:
+            data["custom_fields"] = input.custom_fields
 
         # Add date fields (use camelCase for API)
         if input.start_date:
@@ -478,6 +521,9 @@ async def create_work_package(input: CreateWorkPackageInput) -> str:
         if result.get('dueDate'):
             text += f"**Due Date**: {result['dueDate']}\n"
 
+        if input.custom_fields:
+            text += _format_custom_fields(result, input.custom_fields)
+
         return text
 
     except Exception as e:
@@ -504,7 +550,8 @@ async def update_work_package(input: UpdateWorkPackageInput) -> str:
             "status_id": 5,
             "assignee_id": 7,
             "percentage_done": 50,
-            "due_date": "2025-01-20"
+            "due_date": "2025-01-20",
+            "custom_fields": {"20": {"raw": "Log in as a test user and try an expired password"}}
         }
     """
     try:
@@ -529,6 +576,8 @@ async def update_work_package(input: UpdateWorkPackageInput) -> str:
             data["percentage_done"] = input.percentage_done
         if input.version_id is not None:
             data["version_id"] = input.version_id
+        if input.custom_fields:
+            data["custom_fields"] = input.custom_fields
 
         # Add date fields (use camelCase for API)
         if input.start_date is not None:
@@ -567,10 +616,75 @@ async def update_work_package(input: UpdateWorkPackageInput) -> str:
         if 'percentageDone' in result:
             text += f"**Progress**: {result['percentageDone']}%\n"
 
+        if input.custom_fields:
+            text += _format_custom_fields(result, input.custom_fields)
+
         return text
 
     except Exception as e:
         return format_error(f"Failed to update work package: {str(e)}")
+
+
+@mcp.tool
+async def duplicate_work_package(input: DuplicateWorkPackageInput) -> str:
+    """Duplicate a work package (copy its fields into a new one).
+
+    OpenProject API v3 has no native copy endpoint, so the source is read and a
+    new work package is created from its fields: subject, description, type,
+    status, priority, assignee, responsible, version, category, parent and all
+    custom fields. The copy starts with time tracking and progress at zero
+    (no dates, no estimates, 0% done).
+
+    NOT copied: attachments, comments, relations, watchers and children. When the
+    description embeds images, the copy still points at the original's
+    attachments - re-upload them manually if the copy needs its own.
+
+    Args:
+        input: work_package_id, plus optional subject and target_project_id
+
+    Returns:
+        Success message with the new work package ID
+
+    Example:
+        {
+            "work_package_id": 123,
+            "subject": "Fix login issue (copy)",
+            "target_project_id": 5
+        }
+    """
+    try:
+        client = get_client()
+
+        result = await client.duplicate_work_package(
+            input.work_package_id,
+            target_project_id=input.target_project_id,
+            subject=input.subject,
+        )
+
+        text = format_success(
+            f"Work package #{result.get('id')} created as a copy of "
+            f"#{input.work_package_id}!\n\n"
+        )
+        text += f"**Subject**: {result.get('subject')}\n"
+
+        embedded = result.get("_embedded", {})
+        if "project" in embedded:
+            text += f"**Project**: {embedded['project'].get('name', 'Unknown')}\n"
+        if "type" in embedded:
+            text += f"**Type**: {embedded['type'].get('name', 'Unknown')}\n"
+        if "status" in embedded:
+            text += f"**Status**: {embedded['status'].get('name', 'Unknown')}\n"
+        if "assignee" in embedded:
+            text += f"**Assignee**: {embedded['assignee'].get('name', 'Unassigned')}\n"
+
+        text += (
+            "\n⚠️ Not copied: attachments, comments, relations, watchers, children. "
+            "Time tracking and progress start at zero."
+        )
+        return text
+
+    except Exception as e:
+        return format_error(f"Failed to duplicate work package: {str(e)}")
 
 
 @mcp.tool

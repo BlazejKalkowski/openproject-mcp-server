@@ -38,7 +38,7 @@ NEW_AGENT_TOOLS = {
     "remove_watcher",
     "list_work_package_attachments",
     "get_attachment",
-    "upload_attachment",
+    # "upload_attachment" wyłączone - patrz src/tools/attachments.py
     "list_my_work_packages",
     "list_queries",
     "run_query",

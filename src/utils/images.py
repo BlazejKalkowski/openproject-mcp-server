@@ -8,7 +8,9 @@ from typing import Any, Optional, Tuple
 MAX_IMAGE_BYTES = 750 * 1024
 MIN_IMAGE_DIMENSION = 64
 MAX_IMAGE_DIMENSION = 4096
-DEFAULT_MAX_DIMENSION = 1600
+# 1092 px to próg, poniżej którego model nie skaluje obrazu po swojej stronie;
+# zejście z 1600 px oszczędza ok. 1/3 tokenów bez utraty czytelności zrzutów
+DEFAULT_MAX_DIMENSION = 1092
 
 IMAGE_FORMATS = {
     "image/png": "png",

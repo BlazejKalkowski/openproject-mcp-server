@@ -8,6 +8,7 @@ import os
 import json
 import logging
 import mimetypes
+import re
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 import asyncio
@@ -30,6 +31,25 @@ MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
 MAX_REDIRECTS = 3
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 DOWNLOAD_CHUNK_SIZE = 64 * 1024
+
+# Lokalne odpowiedniki helperów z src.utils.rendering - ten moduł nie może
+# importować z utils (rendering importuje z client => cykl)
+_ID_FROM_HREF = re.compile(r"/api/v3/[^?#]*?/(\d+)/?(?:[?#].*)?$")
+_CUSTOM_FIELD_KEY = re.compile(r"^customField(\d+)$")
+
+
+def extract_id(href: Optional[str]) -> Optional[int]:
+    """Numeric ID from an API href such as "/api/v3/users/123"; None if absent."""
+    if not href or not isinstance(href, str):
+        return None
+    match = _ID_FROM_HREF.search(href)
+    return int(match.group(1)) if match else None
+
+
+def custom_field_number(key: str) -> Optional[int]:
+    """Number N from a "customFieldN" key; None for any other key."""
+    match = _CUSTOM_FIELD_KEY.match(key) if isinstance(key, str) else None
+    return int(match.group(1)) if match else None
 
 
 class OpenProjectAPIError(Exception):
@@ -428,6 +448,10 @@ class OpenProjectClient:
 
         Args:
             data: Work package data including project, subject, type, etc.
+                `custom_fields` maps a custom field number to a body value,
+                `custom_field_links` maps it to a `_links` entry (CustomOption,
+                User, Version and similar link-typed fields).
+                `notify` set to False appends ?notify=false to the request.
 
         Returns:
             Dict: Created work package data
@@ -475,6 +499,12 @@ class OpenProjectClient:
             payload["_links"]["version"] = {
                 "href": f"/api/v3/versions/{data['version_id']}"
             }
+        for field_id, value in (data.get("custom_fields") or {}).items():
+            payload[f"customField{field_id}"] = value
+        for field_id, link in (data.get("custom_field_links") or {}).items():
+            if "_links" not in payload:
+                payload["_links"] = {}
+            payload["_links"][f"customField{field_id}"] = link
 
         # Add date fields (ISO 8601 format: YYYY-MM-DD)
         if "startDate" in data:
@@ -485,7 +515,154 @@ class OpenProjectClient:
             payload["date"] = data["date"]
 
         # Create work package
-        return await self._request("POST", "/work_packages", payload)
+        endpoint = "/work_packages"
+        if data.get("notify") is False:
+            endpoint += "?notify=false"
+        return await self._request("POST", endpoint, payload)
+
+    # Pola tylko do odczytu oraz wyliczane - nigdy nie kopiowane do duplikatu
+    COPY_SKIPPED_FIELDS = frozenset(
+        {
+            "id",
+            "lockVersion",
+            "_type",
+            "createdAt",
+            "updatedAt",
+            "readonly",
+            "spentTime",
+            "derivedEstimatedTime",
+            "derivedRemainingTime",
+            "derivedPercentageDone",
+            "derivedStartDate",
+            "derivedDueDate",
+        }
+    )
+    # Pola czasu/postępu - duplikat startuje wyzerowany
+    COPY_RESET_FIELDS = frozenset(
+        {
+            "estimatedTime",
+            "remainingTime",
+            "percentageDone",
+            "startDate",
+            "dueDate",
+            "duration",
+        }
+    )
+    COPY_BODY_FIELDS = (
+        "subject",
+        "description",
+        "scheduleManually",
+        "ignoreNonWorkingDays",
+    )
+    # Linki przenoszone wprost; author/self/project celowo pominięte
+    COPY_LINK_FIELDS = (
+        "type",
+        "status",
+        "priority",
+        "assignee",
+        "responsible",
+        "version",
+        "category",
+        "parent",
+    )
+
+    def build_work_package_copy(
+        self,
+        source: Dict,
+        target_project_id: Optional[int] = None,
+        subject: Optional[str] = None,
+    ) -> Dict:
+        """
+        Build the payload for a duplicate of `source` (no request is sent).
+
+        Copies the plain fields, the link fields and every custom field
+        (body values and `_links` variants alike). Time tracking and progress
+        start at zero; attachments, comments, relations, watchers and children
+        are not copied.
+
+        Args:
+            source: Raw work package as returned by get_work_package
+            target_project_id: Project of the copy (defaults to the source project)
+            subject: Subject of the copy (defaults to the source subject)
+
+        Returns:
+            Dict: Data accepted by create_work_package
+        """
+        source_links = source.get("_links") or {}
+        project_id = target_project_id or extract_id(
+            (source_links.get("project") or {}).get("href")
+        )
+        if project_id is None:
+            raise ValueError("Cannot determine the target project of the copy")
+
+        data: Dict[str, Any] = {
+            "project": project_id,
+            "subject": subject or source.get("subject") or "",
+            "notify": False,
+        }
+
+        if isinstance(source.get("description"), dict):
+            data["description"] = source["description"].get("raw") or ""
+        for field in self.COPY_BODY_FIELDS:
+            if field not in ("subject", "description") and field in source:
+                data[field] = source[field]
+
+        for field in self.COPY_LINK_FIELDS:
+            href = (source_links.get(field) or {}).get("href")
+            field_id = extract_id(href)
+            if field_id is None:
+                continue
+            if field == "type":
+                data["type"] = field_id
+            else:
+                data[f"{field}_id"] = field_id
+
+        custom_fields: Dict[int, Any] = {}
+        for key, value in source.items():
+            field_id = custom_field_number(key)
+            if field_id is not None and key not in self.COPY_SKIPPED_FIELDS:
+                custom_fields[field_id] = value
+        custom_field_links: Dict[int, Any] = {}
+        for key, link in source_links.items():
+            field_id = custom_field_number(key)
+            if field_id is None:
+                continue
+            href = link.get("href") if isinstance(link, dict) else None
+            if href:
+                custom_field_links[field_id] = {"href": href}
+
+        if custom_fields:
+            data["custom_fields"] = custom_fields
+        if custom_field_links:
+            data["custom_field_links"] = custom_field_links
+
+        return data
+
+    async def duplicate_work_package(
+        self,
+        work_package_id: int,
+        target_project_id: Optional[int] = None,
+        subject: Optional[str] = None,
+    ) -> Dict:
+        """
+        Duplicate a work package (OpenProject API v3 has no native copy endpoint).
+
+        Reads the source and creates a new work package from its fields; time
+        tracking and progress start at zero. Attachments, comments, relations,
+        watchers and children are not copied.
+
+        Args:
+            work_package_id: Work package to duplicate
+            target_project_id: Project of the copy (defaults to the source project)
+            subject: Subject of the copy (defaults to the source subject)
+
+        Returns:
+            Dict: Created work package data
+        """
+        source = await self.get_work_package(work_package_id)
+        return await self.create_work_package(
+            self.build_work_package_copy(source, target_project_id, subject)
+        )
 
     async def get_types(self, project_id: Optional[int] = None) -> Dict:
         """
@@ -694,6 +871,8 @@ class OpenProjectClient:
             }
         if "percentage_done" in data:
             payload["percentageDone"] = data["percentage_done"]
+        for field_id, value in (data.get("custom_fields") or {}).items():
+            payload[f"customField{field_id}"] = value
         if "parent_id" in data:
             if "_links" not in payload:
                 payload["_links"] = {}
@@ -838,6 +1017,8 @@ class OpenProjectClient:
             payload["_links"]["activity"] = {
                 "href": f"/api/v3/time_entries/activities/{data['activity_id']}"
             }
+        for field_id, value in (data.get("custom_fields") or {}).items():
+            payload[f"customField{field_id}"] = value
 
         return await self._request("POST", "/time_entries", payload)
 
@@ -871,6 +1052,8 @@ class OpenProjectClient:
             payload["_links"]["activity"] = {
                 "href": f"/api/v3/time_entries/activities/{data['activity_id']}"
             }
+        for field_id, value in (data.get("custom_fields") or {}).items():
+            payload[f"customField{field_id}"] = value
 
         return await self._request("PATCH", f"/time_entries/{time_entry_id}", payload)
 

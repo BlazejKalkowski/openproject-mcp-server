@@ -48,13 +48,13 @@ def test_image_format_for(mime, expected):
 
 
 def test_small_png_is_returned_unchanged():
-    data = make_image((1200, 800))
+    data = make_image((1000, 800))
 
     result = prepare_image(data, "image/png")
 
     assert result.data == data
     assert result.format == "png"
-    assert result.size == result.original_size == (1200, 800)
+    assert result.size == result.original_size == (1000, 800)
     assert not result.changed
 
 
@@ -138,7 +138,7 @@ def test_webp_is_supported():
 
     result = prepare_image(data, "image/webp")
 
-    assert result.size == (1600, 800)
+    assert result.size == (1092, 546)
     assert result.format == "webp"
 
 

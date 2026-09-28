@@ -6,6 +6,7 @@ import json
 import pytest
 
 from src.client import OpenProjectAPIError
+from src.tools.context import comment_image_ids
 
 
 @pytest.fixture
@@ -158,8 +159,31 @@ async def test_context_description_images(wp_client, call_tool):
 
     assert data["description_images"]["attachment_ids"] == [42]
     assert "get_attachment" in data["description_images"]["hint"]
-    assert "## 🖼️ Obrazy w opisie (1)" in text
-    assert "#42" in text and "get_attachment" in text
+    assert "## 🖼️ Obrazy osadzone (1)" in text
+    assert "W opisie: #42" in text and "get_attachment" in text
+
+
+async def test_context_comment_images_are_listed_separately(wp_client, call_tool):
+    data = json.loads(await call_tool("get_work_package_context", work_package_id=1234, format="json"))
+
+    # Obrazy z opisu nie są powielane w sekcji komentarzy
+    assert 42 not in data["description_images"]["comment_attachment_ids"]
+
+
+def test_comment_image_ids_finds_embedded_attachments():
+    comments = [
+        {"comment": "Zrzut: ![](/api/v3/attachments/77/content)"},
+        {"comment": "Bez obrazu"},
+        {"comment": "Ten sam ![](/api/v3/attachments/77/content) i ![](/api/v3/attachments/78/content)"},
+    ]
+
+    assert comment_image_ids(comments) == [77, 78]
+
+
+def test_comment_image_ids_handles_missing_comments():
+    assert comment_image_ids(None) == []
+    assert comment_image_ids({"error": "Brak dostępu (403)"}) == []
+    assert comment_image_ids([]) == []
 
 
 @pytest.mark.parametrize(

@@ -20,6 +20,7 @@ WRITE_PREFIXES = (
     "assign_",
     "unassign_",
     "upload_",
+    "duplicate_",
 )
 
 WRITE_TOOLS: frozenset[str] = frozenset(
@@ -28,6 +29,7 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "create_work_package",
         "update_work_package",
         "delete_work_package",
+        "duplicate_work_package",
         "assign_work_package",
         "unassign_work_package",
         "add_work_package_comment",
@@ -62,7 +64,7 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "add_watcher",
         "remove_watcher",
         # attachments
-        "upload_attachment",
+        # "upload_attachment",  # narzędzie tymczasowo wyłączone, patrz src/tools/attachments.py
     }
 )
 

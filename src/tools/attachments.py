@@ -363,44 +363,49 @@ def _saved_result(
     return "\n".join(lines)
 
 
-@mcp.tool
-async def upload_attachment(
-    work_package_id: int, file_path: str, description: Optional[str] = None
-) -> str:
-    """Upload a local file as a work package attachment.
-
-    The file must exist, be a regular file and be at most 25 MB; this is checked
-    before any request is sent to OpenProject.
-
-    Args:
-        work_package_id: Work package ID
-        file_path: Path of the local file to upload
-        description: Optional attachment description
-    """
-    if not file_path or not file_path.strip():
-        return format_error("Parametr file_path jest wymagany")
-    path = Path(file_path.strip()).expanduser()
-    if not path.exists():
-        return format_error(f"Plik nie istnieje: {path}")
-    if not path.is_file():
-        return format_error(f"Ścieżka nie jest zwykłym plikiem: {path}")
-    size = path.stat().st_size
-    if size > MAX_UPLOAD_BYTES:
-        return format_error(
-            f"Plik jest za duży ({human_size(size)}); limit uploadu to "
-            f"{human_size(MAX_UPLOAD_BYTES)}"
-        )
-
-    try:
-        client = get_client()
-        result = await client.upload_attachment(work_package_id, str(path), description)
-    except Exception as e:
-        return format_api_error(e)
-
-    return (
-        f"✅ Dodano załącznik do zadania #{work_package_id}\n"
-        f"- **ID załącznika:** {result.get('id')}\n"
-        f"- **Nazwa:** {result.get('fileName') or path.name}\n"
-        f"- **Rozmiar:** {human_size(result.get('fileSize', size))}\n"
-        f"- **Typ MIME:** `{result.get('contentType') or '?'}`"
-    )
+# Narzędzie MCP wyłączone: na razie wrzucamy załączniki ręcznie (przez UI OpenProject).
+# Być może w przyszłości wrócimy do automatycznego uploadu przez agenta - kod
+# (razem z client.upload_attachment) zostaje, tylko zakomentowany, żeby łatwo
+# było go przywrócić.
+#
+# @mcp.tool
+# async def upload_attachment(
+#     work_package_id: int, file_path: str, description: Optional[str] = None
+# ) -> str:
+#     """Upload a local file as a work package attachment.
+#
+#     The file must exist, be a regular file and be at most 25 MB; this is checked
+#     before any request is sent to OpenProject.
+#
+#     Args:
+#         work_package_id: Work package ID
+#         file_path: Path of the local file to upload
+#         description: Optional attachment description
+#     """
+#     if not file_path or not file_path.strip():
+#         return format_error("Parametr file_path jest wymagany")
+#     path = Path(file_path.strip()).expanduser()
+#     if not path.exists():
+#         return format_error(f"Plik nie istnieje: {path}")
+#     if not path.is_file():
+#         return format_error(f"Ścieżka nie jest zwykłym plikiem: {path}")
+#     size = path.stat().st_size
+#     if size > MAX_UPLOAD_BYTES:
+#         return format_error(
+#             f"Plik jest za duży ({human_size(size)}); limit uploadu to "
+#             f"{human_size(MAX_UPLOAD_BYTES)}"
+#         )
+#
+#     try:
+#         client = get_client()
+#         result = await client.upload_attachment(work_package_id, str(path), description)
+#     except Exception as e:
+#         return format_api_error(e)
+#
+#     return (
+#         f"✅ Dodano załącznik do zadania #{work_package_id}\n"
+#         f"- **ID załącznika:** {result.get('id')}\n"
+#         f"- **Nazwa:** {result.get('fileName') or path.name}\n"
+#         f"- **Rozmiar:** {human_size(result.get('fileSize', size))}\n"
+#         f"- **Typ MIME:** `{result.get('contentType') or '?'}`"
+#     )

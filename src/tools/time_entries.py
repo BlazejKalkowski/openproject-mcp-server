@@ -1,9 +1,15 @@
 """Time entry management tools for time tracking."""
 
-from typing import Optional
+from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 from src.server import mcp, get_client
 from src.utils.formatting import format_success, format_error
+
+
+CUSTOM_FIELDS_DESCRIPTION = (
+    "Optional custom field values keyed by custom field number, "
+    "sent to the API as customField<N> (e.g. {\"56\": true} for a checkbox)"
+)
 
 
 class CreateTimeEntryInput(BaseModel):
@@ -13,6 +19,7 @@ class CreateTimeEntryInput(BaseModel):
     spent_on: str = Field(..., description="Date spent (YYYY-MM-DD)")
     activity_id: int = Field(..., description="Activity ID (1=Management, 2=Specification, 3=Development, 4=Testing)", gt=0)
     comment: Optional[str] = Field(None, description="Optional comment")
+    custom_fields: Optional[Dict[int, Any]] = Field(None, description=CUSTOM_FIELDS_DESCRIPTION)
 
 
 class UpdateTimeEntryInput(BaseModel):
@@ -22,6 +29,15 @@ class UpdateTimeEntryInput(BaseModel):
     spent_on: Optional[str] = Field(None, description="New date (YYYY-MM-DD)")
     activity_id: Optional[int] = Field(None, description="New activity ID", gt=0)
     comment: Optional[str] = Field(None, description="New comment")
+    custom_fields: Optional[Dict[int, Any]] = Field(None, description=CUSTOM_FIELDS_DESCRIPTION)
+
+
+def _format_custom_fields(result: Dict, field_ids) -> str:
+    text = ""
+    for field_id in field_ids:
+        key = f"customField{field_id}"
+        text += f"**{key}**: {result.get(key, 'N/A')}\n"
+    return text
 
 
 @mcp.tool
@@ -116,7 +132,8 @@ async def create_time_entry(input: CreateTimeEntryInput) -> str:
             "hours": 2.5,
             "spent_on": "2025-01-15",
             "activity_id": 3,
-            "comment": "Implemented feature X"
+            "comment": "Implemented feature X",
+            "custom_fields": {"56": true}
         }
     """
     try:
@@ -131,6 +148,8 @@ async def create_time_entry(input: CreateTimeEntryInput) -> str:
 
         if input.comment:
             data["comment"] = input.comment
+        if input.custom_fields:
+            data["custom_fields"] = input.custom_fields
 
         result = await client.create_time_entry(data)
 
@@ -147,6 +166,9 @@ async def create_time_entry(input: CreateTimeEntryInput) -> str:
 
         if result.get('comment', {}).get('raw'):
             text += f"**Comment**: {result['comment']['raw']}\n"
+
+        if input.custom_fields:
+            text += _format_custom_fields(result, input.custom_fields)
 
         return text
 
@@ -177,6 +199,8 @@ async def update_time_entry(input: UpdateTimeEntryInput) -> str:
             update_data["activity_id"] = input.activity_id
         if input.comment is not None:
             update_data["comment"] = input.comment
+        if input.custom_fields:
+            update_data["custom_fields"] = input.custom_fields
 
         if not update_data:
             return format_error("No fields provided to update")
@@ -193,6 +217,9 @@ async def update_time_entry(input: UpdateTimeEntryInput) -> str:
 
         if result.get('comment', {}).get('raw'):
             text += f"**Comment**: {result['comment']['raw']}\n"
+
+        if input.custom_fields:
+            text += _format_custom_fields(result, input.custom_fields)
 
         return text
 

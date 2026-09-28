@@ -202,30 +202,30 @@ async def test_list_attachments_api_error(mock_client, call_tool):
 # ============================================================
 
 
-async def test_png_1200x800_returned_in_original_size(mock_client, call_tool):
-    data = make_image((1200, 800))
+async def test_png_within_default_dimension_returned_unchanged(mock_client, call_tool):
+    data = make_image((1000, 800))
     setup_attachment(mock_client, 11, "screen.png", "image/png", data)
 
     result = await call_tool("get_attachment", attachment_id=11)
 
     assert isinstance(result, list) and len(result) == 2
     assert "screen.png" in result[0]
-    assert "1200×800" in result[0]
+    assert "1000×800" in result[0]
     assert result[1].data == data
     assert result[1]._mime_type == "image/png"
     mock_client.get_attachment.assert_awaited_once_with(11)
     mock_client.download_attachment.assert_awaited_once_with(11)
 
 
-async def test_jpeg_4000x3000_scaled_to_1600(mock_client, call_tool):
+async def test_jpeg_4000x3000_scaled_to_default_dimension(mock_client, call_tool):
     setup_attachment(mock_client, 12, "photo.jpg", "image/jpeg", make_image((4000, 3000), "JPEG"))
 
     result = await call_tool("get_attachment", attachment_id=12)
 
     image = decoded_image(result)
-    assert max(image.size) <= 1600
-    assert image.size == (1600, 1200)
-    assert "4000×3000 → 1600×1200" in result[0]
+    assert max(image.size) <= 1092
+    assert image.size == (1092, 819)
+    assert "4000×3000 → 1092×819" in result[0]
 
 
 async def test_custom_max_dimension(mock_client, call_tool):
@@ -257,7 +257,7 @@ async def test_invalid_max_dimension_rejected_before_request(mock_client, call_t
 
 
 async def test_image_via_mcp_pipeline_is_image_content(mock_client, call_tool_mcp):
-    data = make_image((1200, 800))
+    data = make_image((1000, 800))
     setup_attachment(mock_client, 14, "screen.png", "image/png", data)
 
     result = await call_tool_mcp("get_attachment", {"attachment_id": 14})
@@ -429,59 +429,62 @@ async def test_get_attachment_metadata_404(mock_client, call_tool):
 
 
 # ============================================================
-# upload_attachment
+# upload_attachment - narzędzie MCP tymczasowo wyłączone (patrz
+# src/tools/attachments.py), więc te testy narzędzia są zakomentowane.
+# Załączniki wrzucamy teraz ręcznie; być może w przyszłości wrócimy
+# do automatycznego uploadu przez agenta.
 # ============================================================
 
 
-async def test_upload_existing_file_returns_new_id(mock_client, call_tool, tmp_path):
-    file_path = tmp_path / "zrzut.png"
-    file_path.write_bytes(make_image((50, 50)))
-    mock_client.upload_attachment.return_value = {
-        "id": 555, "fileName": "zrzut.png", "fileSize": file_path.stat().st_size, "contentType": "image/png",
-    }
-
-    result = await call_tool("upload_attachment", work_package_id=1001, file_path=str(file_path), description="Błąd")
-
-    mock_client.upload_attachment.assert_awaited_once_with(1001, str(file_path), "Błąd")
-    assert "555" in result
-    assert result.startswith("✅")
-
-
-async def test_upload_missing_file_sends_no_request(mock_client, call_tool, tmp_path):
-    result = await call_tool("upload_attachment", work_package_id=1, file_path=str(tmp_path / "brak.png"))
-
-    assert result.startswith("❌")
-    assert "nie istnieje" in result
-    mock_client.upload_attachment.assert_not_awaited()
+# async def test_upload_existing_file_returns_new_id(mock_client, call_tool, tmp_path):
+#     file_path = tmp_path / "zrzut.png"
+#     file_path.write_bytes(make_image((50, 50)))
+#     mock_client.upload_attachment.return_value = {
+#         "id": 555, "fileName": "zrzut.png", "fileSize": file_path.stat().st_size, "contentType": "image/png",
+#     }
+#
+#     result = await call_tool("upload_attachment", work_package_id=1001, file_path=str(file_path), description="Błąd")
+#
+#     mock_client.upload_attachment.assert_awaited_once_with(1001, str(file_path), "Błąd")
+#     assert "555" in result
+#     assert result.startswith("✅")
 
 
-async def test_upload_directory_rejected(mock_client, call_tool, tmp_path):
-    result = await call_tool("upload_attachment", work_package_id=1, file_path=str(tmp_path))
-
-    assert result.startswith("❌")
-    mock_client.upload_attachment.assert_not_awaited()
-
-
-async def test_upload_too_large_rejected(mock_client, call_tool, tmp_path, monkeypatch):
-    monkeypatch.setattr(attachments, "MAX_UPLOAD_BYTES", 10)
-    file_path = tmp_path / "big.bin"
-    file_path.write_bytes(b"x" * 11)
-
-    result = await call_tool("upload_attachment", work_package_id=1, file_path=str(file_path))
-
-    assert result.startswith("❌")
-    assert "za duży" in result
-    mock_client.upload_attachment.assert_not_awaited()
+# async def test_upload_missing_file_sends_no_request(mock_client, call_tool, tmp_path):
+#     result = await call_tool("upload_attachment", work_package_id=1, file_path=str(tmp_path / "brak.png"))
+#
+#     assert result.startswith("❌")
+#     assert "nie istnieje" in result
+#     mock_client.upload_attachment.assert_not_awaited()
 
 
-async def test_upload_api_error(mock_client, call_tool, tmp_path):
-    file_path = tmp_path / "a.txt"
-    file_path.write_text("x")
-    mock_client.upload_attachment.side_effect = OpenProjectAPIError(403, '{"message": "Brak uprawnień."}')
+# async def test_upload_directory_rejected(mock_client, call_tool, tmp_path):
+#     result = await call_tool("upload_attachment", work_package_id=1, file_path=str(tmp_path))
+#
+#     assert result.startswith("❌")
+#     mock_client.upload_attachment.assert_not_awaited()
 
-    result = await call_tool("upload_attachment", work_package_id=1, file_path=str(file_path))
 
-    assert result == "❌ Błąd API 403: Brak uprawnień."
+# async def test_upload_too_large_rejected(mock_client, call_tool, tmp_path, monkeypatch):
+#     monkeypatch.setattr(attachments, "MAX_UPLOAD_BYTES", 10)
+#     file_path = tmp_path / "big.bin"
+#     file_path.write_bytes(b"x" * 11)
+#
+#     result = await call_tool("upload_attachment", work_package_id=1, file_path=str(file_path))
+#
+#     assert result.startswith("❌")
+#     assert "za duży" in result
+#     mock_client.upload_attachment.assert_not_awaited()
+
+
+# async def test_upload_api_error(mock_client, call_tool, tmp_path):
+#     file_path = tmp_path / "a.txt"
+#     file_path.write_text("x")
+#     mock_client.upload_attachment.side_effect = OpenProjectAPIError(403, '{"message": "Brak uprawnień."}')
+#
+#     result = await call_tool("upload_attachment", work_package_id=1, file_path=str(file_path))
+#
+#     assert result == "❌ Błąd API 403: Brak uprawnień."
 
 
 def test_upload_limit_matches_download_limit():

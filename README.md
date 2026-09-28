@@ -498,6 +498,18 @@ Update an existing work package.
 - `assignee_id` (integer, optional): User ID to assign to
 - `percentage_done` (integer, optional): Completion percentage (0-100)
 
+#### 13. `duplicate_work_package`
+Duplicate a work package. OpenProject API v3 has no native copy endpoint, so the source is read and a new work package is created from its fields: subject, description, type, status, priority, assignee, responsible, version, category, parent and all custom fields (both body values and link-typed ones).
+
+The copy starts with **time tracking and progress at zero** – no dates, no estimates, 0% done.
+
+**Not copied:** attachments, comments, relations, watchers and children. When the description embeds images, the copy still points at the original's attachments – re-upload them manually if the copy needs its own.
+
+**Parameters:**
+- `work_package_id` (integer, required): Work package to duplicate
+- `subject` (string, optional): Subject of the copy (defaults to the source subject)
+- `target_project_id` (integer, optional): Project of the copy (defaults to the source project)
+
 #### 13. `delete_work_package`
 Delete a work package.
 
@@ -875,7 +887,7 @@ Tools designed for coding agents (e.g. Claude Code) working on OpenProject tasks
 | Tool | Description | Parameters |
 |------|-------------|------------|
 | `get_work_package` | Full details of a single work package: subject, type, status, priority, project, assignee, responsible, author, version, dates, progress, parent, custom fields (by schema name, human-readable values) and the complete, untruncated description (raw markdown). | `work_package_id` (int), `format` |
-| `get_work_package_context` | Everything an agent needs in one call: details + custom fields, full comments, attachment list (metadata only), relations, hierarchy (parent + children) and IDs of images referenced in the description (fetch them with `get_attachment`). Sections are fetched in parallel; a failing section (e.g. 403) is reported inline and does not break the others. | `work_package_id` (int), `include_comments`, `include_attachments`, `include_relations`, `include_hierarchy` (bool, default `true`), `format` |
+| `get_work_package_context` | Everything an agent needs in one call: details + custom fields, full comments, attachment list (metadata only), relations, hierarchy (parent + children) and IDs of images embedded in the description and in comments (fetch them with `get_attachment`). Sections are fetched in parallel; a failing section (e.g. 403) is reported inline and does not break the others. | `work_package_id` (int), `include_comments`, `include_attachments`, `include_relations`, `include_hierarchy` (bool, default `true`), `format` |
 | `get_allowed_statuses` | Statuses the current user may set on the work package according to the workflow; the current status is marked. Read-only (uses the form endpoint with the current `lockVersion`, nothing is saved). | `work_package_id` (int), `format` |
 | `list_work_package_activities` | Activity history with full comments (no truncation), author, date, internal-comment marker and every field change as readable text. | `work_package_id` (int), `comments_only` (bool, default `false`) |
 
@@ -892,8 +904,9 @@ Tools designed for coding agents (e.g. Claude Code) working on OpenProject tasks
 | Tool | Description | Parameters |
 |------|-------------|------------|
 | `list_work_package_attachments` | Attachments of a work package: ID, file name, MIME type, size, author, date, description (size also in bytes in JSON). | `work_package_id` (int), `format` |
-| `get_attachment` | Returns an attachment in the most useful form for the model: images as viewable image content, text as text, other files saved to a local directory (see below). | `attachment_id` (int), `max_dimension` (64–4096, default 1600) |
-| `upload_attachment` ✏️ | Uploads a local file (max 25 MB) as a work package attachment and returns the new attachment ID. | `work_package_id` (int), `file_path` (str), `description` (str, optional) |
+| `get_attachment` | Returns an attachment in the most useful form for the model: images as viewable image content, text as text, other files saved to a local directory (see below). | `attachment_id` (int), `max_dimension` (64–4096, default 1092) |
+
+> `upload_attachment` is temporarily disabled (commented out in `src/tools/attachments.py`) – attachments are uploaded manually through the OpenProject UI for now. It may come back as an agent tool later.
 
 **How `get_attachment` handles file types**
 
