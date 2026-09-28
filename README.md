@@ -4,6 +4,8 @@
 
 A Model Context Protocol (MCP) server that provides seamless integration with [OpenProject](https://www.openproject.org/) API v3. This server enables LLM applications to interact with OpenProject for project management, work package tracking, and task creation.
 
+See [CHANGELOG.md](CHANGELOG.md) for the release history.
+
 ## Features
 
 - 🔌 **Full OpenProject API v3 Integration**
