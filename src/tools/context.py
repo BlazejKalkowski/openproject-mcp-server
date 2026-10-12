@@ -528,6 +528,80 @@ async def get_allowed_statuses(work_package_id: int, format: str = "markdown") -
     return render(data, format, allowed_statuses_to_markdown)
 
 
+def schema_fields(schema: Dict, only_custom: bool = True) -> List[Dict[str, Any]]:
+    """Fields of a work package schema with type, required flag and allowed values (if listed)."""
+    fields: List[Dict[str, Any]] = []
+    for key, definition in (schema or {}).items():
+        if not isinstance(definition, dict) or "type" not in definition:
+            continue
+        if only_custom and not key.startswith("customField"):
+            continue
+        allowed = (definition.get("_links") or {}).get("allowedValues")
+        embedded = (definition.get("_embedded") or {}).get("allowedValues")
+        field: Dict[str, Any] = {
+            "key": key,
+            "name": definition.get("name"),
+            "type": definition.get("type"),
+            "required": bool(definition.get("required")),
+        }
+        if isinstance(allowed, list):
+            field["allowed_values"] = [
+                {"href": link.get("href"), "title": link.get("title")} for link in allowed
+            ]
+        elif isinstance(allowed, dict) and allowed.get("href"):
+            field["allowed_values_href"] = allowed["href"]
+        elif isinstance(embedded, list):
+            field["allowed_values"] = [
+                {"href": ((item.get("_links") or {}).get("self") or {}).get("href"), "title": item.get("name") or item.get("value")}
+                for item in embedded
+            ]
+        fields.append(field)
+    return fields
+
+
+def schema_fields_to_markdown(data: Dict) -> str:
+    lines = [f"# Schema {data['project_id']}-{data['type_id']}", ""]
+    for field in data["fields"]:
+        required = " *" if field["required"] else ""
+        lines.append(f"## {field['key']}: {field['name']}{required} ({field['type']})")
+        for value in field.get("allowed_values", []):
+            lines.append(f"- {value['title']} -> `{value['href']}`")
+        if field.get("allowed_values_href"):
+            lines.append(f"- allowed values: `{field['allowed_values_href']}`")
+        lines.append("")
+    return "\n".join(lines)
+
+
+@mcp.tool
+async def get_work_package_schema(
+    project_id: int, type_id: int, only_custom: bool = True, format: str = "markdown"
+) -> str:
+    """Read the work package schema of a project/type: fields, required flags, allowed values.
+
+    Read-only. Use it to find custom field numbers and the hrefs to pass in
+    `custom_field_links` (CustomOption lists, Versions) of create/update_work_package.
+
+    Args:
+        project_id: Project ID
+        type_id: Type ID (see list_types)
+        only_custom: If True (default) only custom fields are listed
+        format: "markdown" (default) or "json"
+    """
+    error = _format_error(format)
+    if error:
+        return error
+    try:
+        schema = await get_client().get_work_package_schema(project_id, type_id)
+    except Exception as e:
+        return format_api_error(e)
+    data = {
+        "project_id": project_id,
+        "type_id": type_id,
+        "fields": schema_fields(schema, only_custom),
+    }
+    return render(data, format, schema_fields_to_markdown)
+
+
 @mcp.resource(
     "openproject://work-packages/{work_package_id}",
     name="work_package_context",

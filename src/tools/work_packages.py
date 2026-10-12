@@ -23,6 +23,14 @@ CUSTOM_FIELDS_DESCRIPTION = (
     "Use get_work_package_context or the project's work package schema to find field numbers."
 )
 
+CUSTOM_FIELD_LINKS_DESCRIPTION = (
+    "Optional link-typed custom field values (CustomOption list, Version, User) keyed by "
+    "custom field number, sent to the API as _links.customField<N>. The value is an API href, "
+    "e.g. {\"54\": \"/api/v3/versions/3237\", \"1\": \"/api/v3/custom_options/12\"}. "
+    "Use get_work_package_schema to find the allowed hrefs of a field."
+)
+ESTIMATED_HOURS_DESCRIPTION = "Work (estimated time) in hours, e.g. 160 or 1.5"
+
 
 # Pydantic models for type-safe input validation
 class CreateWorkPackageInput(BaseModel):
@@ -38,7 +46,9 @@ class CreateWorkPackageInput(BaseModel):
     status_id: Optional[int] = Field(None, description="Status ID", gt=0)
     priority_id: Optional[int] = Field(None, description="Priority ID", gt=0)
     version_id: Optional[int] = Field(None, description="Version/milestone ID to assign work package to", gt=0)
+    estimated_hours: Optional[float] = Field(None, description=ESTIMATED_HOURS_DESCRIPTION, ge=0)
     custom_fields: Optional[Dict[int, Any]] = Field(None, description=CUSTOM_FIELDS_DESCRIPTION)
+    custom_field_links: Optional[Dict[int, str]] = Field(None, description=CUSTOM_FIELD_LINKS_DESCRIPTION)
 
 
 class UpdateWorkPackageInput(BaseModel):
@@ -55,7 +65,9 @@ class UpdateWorkPackageInput(BaseModel):
     due_date: Optional[str] = Field(None, description="New due date (YYYY-MM-DD)")
     percentage_done: Optional[int] = Field(None, description="Progress percentage (0-100)", ge=0, le=100)
     version_id: Optional[int] = Field(None, description="Version/milestone ID to assign work package to", gt=0)
+    estimated_hours: Optional[float] = Field(None, description=ESTIMATED_HOURS_DESCRIPTION, ge=0)
     custom_fields: Optional[Dict[int, Any]] = Field(None, description=CUSTOM_FIELDS_DESCRIPTION)
+    custom_field_links: Optional[Dict[int, str]] = Field(None, description=CUSTOM_FIELD_LINKS_DESCRIPTION)
 
 
 class DuplicateWorkPackageInput(BaseModel):
@@ -464,7 +476,10 @@ async def create_work_package(input: CreateWorkPackageInput) -> str:
             "priority_id": 3,
             "assignee_id": 7,
             "due_date": "2025-01-15",
-            "custom_fields": {"20": {"raw": "Log in as a test user and try an expired password"}}
+            "custom_fields": {"20": {"raw": "Log in as a test user and try an expired password"}},
+            "custom_field_links": {"54": "/api/v3/versions/3237"},
+            "status_id": 13,
+            "estimated_hours": 160
         }
     """
     try:
@@ -486,8 +501,14 @@ async def create_work_package(input: CreateWorkPackageInput) -> str:
             data["assignee_id"] = input.assignee_id
         if input.version_id:
             data["version_id"] = input.version_id
+        if input.status_id:
+            data["status_id"] = input.status_id
+        if input.estimated_hours is not None:
+            data["estimated_hours"] = input.estimated_hours
         if input.custom_fields:
             data["custom_fields"] = input.custom_fields
+        if input.custom_field_links:
+            data["custom_field_links"] = input.custom_field_links
 
         # Add date fields (use camelCase for API)
         if input.start_date:
@@ -521,8 +542,12 @@ async def create_work_package(input: CreateWorkPackageInput) -> str:
         if result.get('dueDate'):
             text += f"**Due Date**: {result['dueDate']}\n"
 
+        if result.get('estimatedTime'):
+            text += f"**Work**: {result['estimatedTime']}\n"
         if input.custom_fields:
             text += _format_custom_fields(result, input.custom_fields)
+        if input.custom_field_links:
+            text += _format_custom_fields(result, input.custom_field_links)
 
         return text
 
@@ -576,8 +601,12 @@ async def update_work_package(input: UpdateWorkPackageInput) -> str:
             data["percentage_done"] = input.percentage_done
         if input.version_id is not None:
             data["version_id"] = input.version_id
+        if input.estimated_hours is not None:
+            data["estimated_hours"] = input.estimated_hours
         if input.custom_fields:
             data["custom_fields"] = input.custom_fields
+        if input.custom_field_links:
+            data["custom_field_links"] = input.custom_field_links
 
         # Add date fields (use camelCase for API)
         if input.start_date is not None:
@@ -616,8 +645,12 @@ async def update_work_package(input: UpdateWorkPackageInput) -> str:
         if 'percentageDone' in result:
             text += f"**Progress**: {result['percentageDone']}%\n"
 
+        if result.get('estimatedTime'):
+            text += f"**Work**: {result['estimatedTime']}\n"
         if input.custom_fields:
             text += _format_custom_fields(result, input.custom_fields)
+        if input.custom_field_links:
+            text += _format_custom_fields(result, input.custom_field_links)
 
         return text
 

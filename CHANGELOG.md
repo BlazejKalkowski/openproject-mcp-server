@@ -14,6 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `custom_field_links` parameter on `create_work_package` and
+  `update_work_package` – sets link-typed custom fields (CustomOption lists,
+  Version, User) as `_links.customFieldN` from an API href, e.g.
+  `{"54": "/api/v3/versions/3237"}`.
+- `estimated_hours` parameter on `create_work_package` and
+  `update_work_package` – sets Work (`estimatedTime`, sent as an ISO 8601
+  duration such as `PT160H`).
+- `get_work_package_schema` – read-only listing of a project/type schema:
+  field keys, names, types, required flags and allowed values with their
+  hrefs (for use in `custom_field_links`).
+
+### Fixed
+
+- `create_work_package` ignored `status_id`; the initial status is now sent.
+
 - `duplicate_work_package` – copies a work package into a new one. OpenProject
   API v3 has no native copy endpoint, so the source is read and recreated from
   its fields: subject, description, `scheduleManually`, `ignoreNonWorkingDays`

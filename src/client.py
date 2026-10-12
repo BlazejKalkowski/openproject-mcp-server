@@ -52,6 +52,18 @@ def custom_field_number(key: str) -> Optional[int]:
     return int(match.group(1)) if match else None
 
 
+def hours_to_duration(hours: float) -> str:
+    """ISO 8601 duration for a number of hours, e.g. 160 -> "PT160H", 1.5 -> "PT1H30M"."""
+    total_minutes = round(float(hours) * 60)
+    h, m = divmod(total_minutes, 60)
+    return f"PT{h}H{m}M" if m else f"PT{h}H"
+
+
+def _custom_field_link(link: Any) -> Dict[str, Any]:
+    """A `_links` entry for a link-typed custom field: accepts an href string or a ready dict."""
+    return link if isinstance(link, dict) else {"href": link}
+
+
 class OpenProjectAPIError(Exception):
     """HTTP error returned by the OpenProject API (status >= 400)."""
 
@@ -450,7 +462,10 @@ class OpenProjectClient:
             data: Work package data including project, subject, type, etc.
                 `custom_fields` maps a custom field number to a body value,
                 `custom_field_links` maps it to a `_links` entry (CustomOption,
-                User, Version and similar link-typed fields).
+                User, Version and similar link-typed fields) - an href string
+                or a ready {"href": ...} dict.
+                `status_id` sets the initial status, `estimated_hours` the Work
+                (estimatedTime) as hours.
                 `notify` set to False appends ?notify=false to the request.
 
         Returns:
@@ -499,12 +514,20 @@ class OpenProjectClient:
             payload["_links"]["version"] = {
                 "href": f"/api/v3/versions/{data['version_id']}"
             }
+        if "status_id" in data:
+            if "_links" not in payload:
+                payload["_links"] = {}
+            payload["_links"]["status"] = {
+                "href": f"/api/v3/statuses/{data['status_id']}"
+            }
+        if "estimated_hours" in data:
+            payload["estimatedTime"] = hours_to_duration(data["estimated_hours"])
         for field_id, value in (data.get("custom_fields") or {}).items():
             payload[f"customField{field_id}"] = value
         for field_id, link in (data.get("custom_field_links") or {}).items():
             if "_links" not in payload:
                 payload["_links"] = {}
-            payload["_links"][f"customField{field_id}"] = link
+            payload["_links"][f"customField{field_id}"] = _custom_field_link(link)
 
         # Add date fields (ISO 8601 format: YYYY-MM-DD)
         if "startDate" in data:
@@ -871,8 +894,14 @@ class OpenProjectClient:
             }
         if "percentage_done" in data:
             payload["percentageDone"] = data["percentage_done"]
+        if "estimated_hours" in data:
+            payload["estimatedTime"] = hours_to_duration(data["estimated_hours"])
         for field_id, value in (data.get("custom_fields") or {}).items():
             payload[f"customField{field_id}"] = value
+        for field_id, link in (data.get("custom_field_links") or {}).items():
+            if "_links" not in payload:
+                payload["_links"] = {}
+            payload["_links"][f"customField{field_id}"] = _custom_field_link(link)
         if "parent_id" in data:
             if "_links" not in payload:
                 payload["_links"] = {}
