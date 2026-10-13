@@ -24,10 +24,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `get_work_package_schema` – read-only listing of a project/type schema:
   field keys, names, types, required flags and allowed values with their
   hrefs (for use in `custom_field_links`).
+- `get_work_package_schema` now takes an optional `values_filter` to narrow
+  down fields with a large number of allowed values (e.g. a CustomOption list
+  with thousands of entries) by a case-insensitive substring match on the
+  title.
+- `get_new_work_package_form` on the client – retrieves the "new work
+  package" form for a project/type pair, whose embedded schema carries
+  `allowedValues` for CustomOption/User/Version fields.
 
 ### Fixed
 
 - `create_work_package` ignored `status_id`; the initial status is now sent.
+- `get_work_package_schema` returned empty `allowedValues` for
+  CustomOption/User/Version fields: the plain schema endpoint
+  (`/work_packages/schemas/{project}-{type}`) leaves `_links` empty for
+  these fields. It now reads from the "new work package" form endpoint
+  instead, which returns them populated.
 
 - `duplicate_work_package` – copies a work package into a new one. OpenProject
   API v3 has no native copy endpoint, so the source is read and recreated from

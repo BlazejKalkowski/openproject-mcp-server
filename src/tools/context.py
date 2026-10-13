@@ -528,33 +528,61 @@ async def get_allowed_statuses(work_package_id: int, format: str = "markdown") -
     return render(data, format, allowed_statuses_to_markdown)
 
 
-def schema_fields(schema: Dict, only_custom: bool = True) -> List[Dict[str, Any]]:
-    """Fields of a work package schema with type, required flag and allowed values (if listed)."""
+MAX_ALLOWED_VALUES = 50
+
+
+def _field_allowed_values(definition: Dict) -> List[Dict[str, Any]]:
+    """Allowed values of one schema field definition, from either shape OpenProject uses."""
+    allowed = (definition.get("_links") or {}).get("allowedValues")
+    if isinstance(allowed, list):
+        return [{"href": link.get("href"), "title": link.get("title")} for link in allowed]
+    embedded = (definition.get("_embedded") or {}).get("allowedValues")
+    if isinstance(embedded, list):
+        return [
+            {
+                "href": ((item.get("_links") or {}).get("self") or {}).get("href"),
+                "title": item.get("name") or item.get("value"),
+            }
+            for item in embedded
+        ]
+    return []
+
+
+def schema_fields(
+    schema: Dict,
+    only_custom: bool = True,
+    values_filter: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Fields of a work package schema with type, required flag and allowed values (if listed).
+
+    `schema` should come from `get_new_work_package_form` so CustomOption/User/Version
+    fields carry `allowedValues` (the plain schema endpoint returns them empty).
+    A field with more than `MAX_ALLOWED_VALUES` values is filtered by `values_filter`
+    (case-insensitive substring on the title) when given, otherwise truncated with a count hint.
+    """
     fields: List[Dict[str, Any]] = []
+    needle = (values_filter or "").strip().lower()
     for key, definition in (schema or {}).items():
         if not isinstance(definition, dict) or "type" not in definition:
             continue
         if only_custom and not key.startswith("customField"):
             continue
-        allowed = (definition.get("_links") or {}).get("allowedValues")
-        embedded = (definition.get("_embedded") or {}).get("allowedValues")
         field: Dict[str, Any] = {
             "key": key,
             "name": definition.get("name"),
             "type": definition.get("type"),
             "required": bool(definition.get("required")),
         }
-        if isinstance(allowed, list):
-            field["allowed_values"] = [
-                {"href": link.get("href"), "title": link.get("title")} for link in allowed
-            ]
-        elif isinstance(allowed, dict) and allowed.get("href"):
-            field["allowed_values_href"] = allowed["href"]
-        elif isinstance(embedded, list):
-            field["allowed_values"] = [
-                {"href": ((item.get("_links") or {}).get("self") or {}).get("href"), "title": item.get("name") or item.get("value")}
-                for item in embedded
-            ]
+        values = _field_allowed_values(definition)
+        if values:
+            total = len(values)
+            if needle:
+                values = [v for v in values if needle in (v.get("title") or "").lower()]
+                field["allowed_values_total"] = total
+            elif total > MAX_ALLOWED_VALUES:
+                field["allowed_values_total"] = total
+                values = values[:MAX_ALLOWED_VALUES]
+            field["allowed_values"] = values
         fields.append(field)
     return fields
 
@@ -564,40 +592,51 @@ def schema_fields_to_markdown(data: Dict) -> str:
     for field in data["fields"]:
         required = " *" if field["required"] else ""
         lines.append(f"## {field['key']}: {field['name']}{required} ({field['type']})")
-        for value in field.get("allowed_values", []):
+        total = field.get("allowed_values_total")
+        values = field.get("allowed_values", [])
+        if total and total > len(values):
+            lines.append(f"_({len(values)} z {total} dozwolonych wartości - zawęź `values_filter`)_")
+        for value in values:
             lines.append(f"- {value['title']} -> `{value['href']}`")
-        if field.get("allowed_values_href"):
-            lines.append(f"- allowed values: `{field['allowed_values_href']}`")
         lines.append("")
     return "\n".join(lines)
 
 
 @mcp.tool
 async def get_work_package_schema(
-    project_id: int, type_id: int, only_custom: bool = True, format: str = "markdown"
+    project_id: int,
+    type_id: int,
+    only_custom: bool = True,
+    values_filter: Optional[str] = None,
+    format: str = "markdown",
 ) -> str:
     """Read the work package schema of a project/type: fields, required flags, allowed values.
 
     Read-only. Use it to find custom field numbers and the hrefs to pass in
-    `custom_field_links` (CustomOption lists, Versions) of create/update_work_package.
+    `custom_field_links` (CustomOption, User, Version fields) of create/update_work_package.
+    Uses the "new work package" form so CustomOption/User/Version fields carry their
+    allowed values (the plain schema endpoint leaves them empty). A field with more than
+    50 values is truncated unless narrowed with `values_filter`.
 
     Args:
         project_id: Project ID
         type_id: Type ID (see list_types)
         only_custom: If True (default) only custom fields are listed
+        values_filter: Case-insensitive substring to filter allowed values (e.g. a customer name)
         format: "markdown" (default) or "json"
     """
     error = _format_error(format)
     if error:
         return error
     try:
-        schema = await get_client().get_work_package_schema(project_id, type_id)
+        form = await get_client().get_new_work_package_form(project_id, type_id)
     except Exception as e:
         return format_api_error(e)
+    schema = (form.get("_embedded") or {}).get("schema") or {}
     data = {
         "project_id": project_id,
         "type_id": type_id,
-        "fields": schema_fields(schema, only_custom),
+        "fields": schema_fields(schema, only_custom, values_filter),
     }
     return render(data, format, schema_fields_to_markdown)
 

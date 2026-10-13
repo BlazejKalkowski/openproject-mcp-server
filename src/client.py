@@ -1835,11 +1835,30 @@ class OpenProjectClient:
         )
 
     async def get_work_package_schema(self, project_id: int, type_id: int) -> Dict:
-        """Retrieve the work package schema for a project/type pair (cached)."""
+        """Retrieve the work package schema for a project/type pair (cached).
+
+        CustomOption/User/Version fields come back with an empty `_links` here -
+        use `get_new_work_package_form` for their allowed values.
+        """
         return await self.cache.get_or_set(
             f"schema:{project_id}-{type_id}",
             lambda: self._request(
                 "GET", f"/work_packages/schemas/{project_id}-{type_id}"
+            ),
+        )
+
+    async def get_new_work_package_form(self, project_id: int, type_id: int) -> Dict:
+        """Retrieve the "new work package" form for a project/type pair (cached).
+
+        Unlike `get_work_package_schema`, this form's embedded schema carries
+        `allowedValues` for CustomOption/User/Version fields.
+        """
+        return await self.cache.get_or_set(
+            f"new_form:{project_id}-{type_id}",
+            lambda: self._request(
+                "POST",
+                f"/projects/{project_id}/work_packages/form",
+                {"_links": {"type": {"href": f"/api/v3/types/{type_id}"}}},
             ),
         )
 
